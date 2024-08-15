@@ -4,31 +4,41 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.gui.widget.CheckboxWidget;
 import net.minecraft.text.Text;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.network.ClientPlayerEntity;
 import org.lwjgl.glfw.GLFW;
 
+import net.fabricmc.loader.api.FabricLoader;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
+
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
 
 public class AutomessageClient implements ClientModInitializer {
 
     private static List<AutoMessage> autoMessages = new ArrayList<>();
     private static KeyBinding openGuiKey;
+    private static final String CONFIG_FILE = "automessage_config.json";
+    private static Thread messageThread;
+    private static volatile boolean shouldRun = true;
 
     @Override
     public void onInitializeClient() {
-        // 初始化5個自動消息
-        for (int i = 0; i < 5; i++) {
-            autoMessages.add(new AutoMessage("自動發話 開發者Johnson " + (i + 1), 60, false));
-        }
+        loadConfig();
 
         openGuiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "自動發話",
@@ -42,27 +52,62 @@ public class AutomessageClient implements ClientModInitializer {
             }
         });
 
-        // 啟動自動發話計時器
-        startAutoChat();
+        startMessageThread();
     }
 
-    public static void startAutoChat() {
-        for (AutoMessage message : autoMessages) {
-            message.start();
+    private static void loadConfig() {
+        File configFile = new File(FabricLoader.getInstance().getConfigDir().toFile(), CONFIG_FILE);
+        if (configFile.exists()) {
+            try (FileReader reader = new FileReader(configFile)) {
+                Type listType = new TypeToken<ArrayList<AutoMessage>>(){}.getType();
+                autoMessages = new Gson().fromJson(reader, listType);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        } else {
+            for (int i = 0; i < 5; i++) {
+                autoMessages.add(new AutoMessage("自動發話 開發者Johnson " + (i + 1), 60, false));
+            }
         }
     }
 
-    public static void stopAutoChat() {
-        for (AutoMessage message : autoMessages) {
-            message.stop();
+    private static void saveConfig() {
+        File configFile = new File(FabricLoader.getInstance().getConfigDir().toFile(), CONFIG_FILE);
+        try (FileWriter writer = new FileWriter(configFile)) {
+            new GsonBuilder().setPrettyPrinting().create().toJson(autoMessages, writer);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
+    }
+
+    private static void startMessageThread() {
+        messageThread = new Thread(() -> {
+            while (shouldRun) {
+                for (AutoMessage message : autoMessages) {
+                    if (message.isRunning) {
+                        message.tryToSend();
+                    }
+                }
+                try {
+                    Thread.sleep(1000); // 每秒檢查一次
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+        messageThread.start();
     }
 
     private static void sendGlobalMessage(String message) {
         MinecraftClient client = MinecraftClient.getInstance();
-        ClientPlayerEntity player = client.player;
-        if (player != null) {
-            player.networkHandler.sendChatMessage(message);
+        if (client.player != null) {
+            client.execute(() -> {
+                try {
+                    client.player.networkHandler.sendChatMessage(message);
+                } catch (Exception e) {
+                    System.out.println("無法發送消息: " + e.getMessage());
+                }
+            });
         }
     }
 
@@ -70,40 +115,20 @@ public class AutomessageClient implements ClientModInitializer {
         String message;
         int interval;
         boolean isRunning;
-        Timer timer;
+        long lastSentTime;
 
         AutoMessage(String message, int interval, boolean isRunning) {
             this.message = message;
             this.interval = interval;
             this.isRunning = isRunning;
+            this.lastSentTime = 0;
         }
 
-        void start() {
-            if (!isRunning) {
-                isRunning = true;
-                timer = new Timer();
-                timer.scheduleAtFixedRate(new TimerTask() {
-                    @Override
-                    public void run() {
-                        sendGlobalMessage(message);
-                    }
-                }, 0, interval * 1000);
-            }
-        }
-
-        void stop() {
-            if (isRunning) {
-                isRunning = false;
-                timer.cancel();
-            }
-        }
-
-        void updateSettings(String newMessage, int newInterval) {
-            this.message = newMessage;
-            this.interval = newInterval;
-            if (isRunning) {
-                stop();
-                start();
+        void tryToSend() {
+            long currentTime = System.currentTimeMillis();
+            if (currentTime - lastSentTime >= interval * 1000) {
+                sendGlobalMessage(message);
+                lastSentTime = currentTime;
             }
         }
     }
@@ -122,8 +147,8 @@ public class AutomessageClient implements ClientModInitializer {
         @Override
         protected void init() {
             int startY = 30;
-            int spacing = 70; // 增加間距以容納更大的文字框
-            int messageWidth = 300; // 增加文字框寬度
+            int spacing = 70;
+            int messageWidth = 300;
 
             for (int i = 0; i < 5; i++) {
                 AutoMessage autoMessage = autoMessages.get(i);
@@ -131,7 +156,7 @@ public class AutomessageClient implements ClientModInitializer {
 
                 TextFieldWidget messageField = new TextFieldWidget(this.textRenderer, this.width / 2 - messageWidth / 2, currentY, messageWidth, 20, Text.of("文字 " + (i + 1)));
                 messageField.setText(autoMessage.message);
-                messageField.setMaxLength(256); // 增加最大字符數
+                messageField.setMaxLength(256);
                 this.addDrawableChild(messageField);
                 messageFields.add(messageField);
 
@@ -140,14 +165,9 @@ public class AutomessageClient implements ClientModInitializer {
                 this.addDrawableChild(intervalField);
                 intervalFields.add(intervalField);
 
-                ButtonWidget toggleButton = ButtonWidget.builder(Text.of(autoMessage.isRunning ? "停止" : "開始"), button -> {
-                    if (autoMessage.isRunning) {
-                        autoMessage.stop();
-                        button.setMessage(Text.of("開始"));
-                    } else {
-                        autoMessage.start();
-                        button.setMessage(Text.of("停止"));
-                    }
+                ButtonWidget toggleButton = ButtonWidget.builder(Text.of(autoMessage.isRunning ? "啟用" : "禁用"), button -> {
+                    autoMessage.isRunning = !autoMessage.isRunning;
+                    button.setMessage(Text.of(autoMessage.isRunning ? "啟用" : "禁用"));
                 }).dimensions(this.width / 2 + messageWidth / 2 - 60, currentY + 25, 60, 20).build();
                 this.addDrawableChild(toggleButton);
                 toggleButtons.add(toggleButton);
@@ -156,15 +176,15 @@ public class AutomessageClient implements ClientModInitializer {
             this.addDrawableChild(ButtonWidget.builder(Text.of("儲存"), button -> {
                 for (int i = 0; i < 5; i++) {
                     AutoMessage autoMessage = autoMessages.get(i);
-                    String newMessage = messageFields.get(i).getText();
-                    int newInterval;
+                    autoMessage.message = messageFields.get(i).getText();
                     try {
-                        newInterval = Integer.parseInt(intervalFields.get(i).getText());
+                        autoMessage.interval = Integer.parseInt(intervalFields.get(i).getText());
                     } catch (NumberFormatException e) {
-                        newInterval = autoMessage.interval;
+                        // 如果輸入無效，保持原來的間隔
                     }
-                    autoMessage.updateSettings(newMessage, newInterval);
+                    // 不需要更新 isRunning，因為它已經在按鈕點擊時更新了
                 }
+                saveConfig();
                 this.close();
             }).dimensions(this.width / 2 - 100, this.height - 40, 200, 20).build());
         }
@@ -174,11 +194,6 @@ public class AutomessageClient implements ClientModInitializer {
             renderBackground(context, mouseX, mouseY, delta);
             context.drawTextWithShadow(this.textRenderer, this.title, (this.width - this.textRenderer.getWidth(this.title)) / 2, 10, 0xFFFFFF);
             super.render(context, mouseX, mouseY, delta);
-        }
-
-        @Override
-        public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-            super.renderBackground(context, mouseX, mouseY, delta);
         }
 
         @Override
