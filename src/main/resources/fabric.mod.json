@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "automessage",
+  "version": "${version}",
+
+  "name": "AutoMessage",
+  "description": "",
+  "authors": [],
+  "contact": {},
+
+  "license": "All-Rights-Reserved",
+  "icon": "assets/automessage/icon.png",
+
+  "environment": "*",
+  "entrypoints": {
+    "client": ["com.johnson.automessage.client.AutomessageClient"],
+    "main": ["com.johnson.automessage.Automessage"]
+  },
+
+  "mixins": [
+    "automessage.mixins.json"
+    ,{
+      "config": "automessage.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "minecraft": ">=1.20",
+    "fabric": "*"
+  }
+}
