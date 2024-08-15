@@ -138,6 +138,10 @@ public class AutomessageClient implements ClientModInitializer {
         private List<TextFieldWidget> messageFields = new ArrayList<>();
         private List<TextFieldWidget> intervalFields = new ArrayList<>();
         private List<ButtonWidget> toggleButtons = new ArrayList<>();
+        private int scrollOffset = 0;
+        private static final int ITEM_HEIGHT = 65;
+        private int visibleItems;
+        private int contentHeight;
 
         public AutoChatScreen(Screen parent) {
             super(Text.of("自動發話設定"));
@@ -146,13 +150,14 @@ public class AutomessageClient implements ClientModInitializer {
 
         @Override
         protected void init() {
+            visibleItems = (this.height - 80) / ITEM_HEIGHT;
+            contentHeight = 5 * ITEM_HEIGHT; // 5個項目的總高度
             int startY = 30;
-            int spacing = 70;
-            int messageWidth = 300;
+            int messageWidth = Math.min(300, this.width - 40);
 
             for (int i = 0; i < 5; i++) {
                 AutoMessage autoMessage = autoMessages.get(i);
-                int currentY = startY + (spacing * i);
+                int currentY = startY + (ITEM_HEIGHT * i);
 
                 TextFieldWidget messageField = new TextFieldWidget(this.textRenderer, this.width / 2 - messageWidth / 2, currentY, messageWidth, 20, Text.of("文字 " + (i + 1)));
                 messageField.setText(autoMessage.message);
@@ -182,18 +187,56 @@ public class AutomessageClient implements ClientModInitializer {
                     } catch (NumberFormatException e) {
                         // 如果輸入無效，保持原來的間隔
                     }
-                    // 不需要更新 isRunning，因為它已經在按鈕點擊時更新了
                 }
                 saveConfig();
                 this.close();
-            }).dimensions(this.width / 2 - 100, this.height - 40, 200, 20).build());
+            }).dimensions(this.width / 2 - 100, this.height - 30, 200, 20).build());
         }
 
         @Override
         public void render(DrawContext context, int mouseX, int mouseY, float delta) {
             renderBackground(context, mouseX, mouseY, delta);
             context.drawTextWithShadow(this.textRenderer, this.title, (this.width - this.textRenderer.getWidth(this.title)) / 2, 10, 0xFFFFFF);
+
+            int messageWidth = Math.min(300, this.width - 40);
+
+            // 創建一個剪裁區域，只在這個區域內繪製元素
+            context.enableScissor(0, 30, this.width, this.height - 40);
+
+            // 繪製可見的元素
+            for (int i = 0; i < 5; i++) {
+                int currentY = 30 + (ITEM_HEIGHT * i) - scrollOffset;
+                if (currentY > -ITEM_HEIGHT && currentY < this.height) {
+                    messageFields.get(i).setX(this.width / 2 - messageWidth / 2);
+                    messageFields.get(i).setY(currentY);
+                    messageFields.get(i).setWidth(messageWidth);
+                    messageFields.get(i).render(context, mouseX, mouseY, delta);
+
+                    intervalFields.get(i).setX(this.width / 2 - messageWidth / 2);
+                    intervalFields.get(i).setY(currentY + 25);
+                    intervalFields.get(i).render(context, mouseX, mouseY, delta);
+
+                    toggleButtons.get(i).setX(this.width / 2 + messageWidth / 2 - 60);
+                    toggleButtons.get(i).setY(currentY + 25);
+                    toggleButtons.get(i).render(context, mouseX, mouseY, delta);
+                }
+            }
+
+            context.disableScissor();
+
             super.render(context, mouseX, mouseY, delta);
+        }
+
+        @Override
+        public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+            scrollOffset = Math.max(0, Math.min(scrollOffset - (int)(verticalAmount * 15), Math.max(0, contentHeight - (this.height - 80))));
+            return true;
+        }
+
+        @Override
+        public void resize(MinecraftClient client, int width, int height) {
+            super.resize(client, width, height);
+            this.init(client, width, height);
         }
 
         @Override
