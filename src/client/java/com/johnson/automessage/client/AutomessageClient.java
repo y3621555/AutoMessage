@@ -36,7 +36,6 @@ public class AutomessageClient implements ClientModInitializer {
     private static KeyBinding openCommandsGuiKey;
     private static final String MESSAGES_CONFIG_FILE = "automessage_config.json";
     private static final String COMMANDS_CONFIG_FILE = "autocommand_config.json";
-    private static Thread messageThread;
     private static volatile boolean shouldRun = true;
 
     @Override
@@ -59,9 +58,21 @@ public class AutomessageClient implements ClientModInitializer {
             while (openCommandsGuiKey.wasPressed()) {
                 client.setScreen(new AutoCommandScreen(client.currentScreen));
             }
-        });
 
-        startMessageThread();
+            // 每次主線程tick時檢查消息和命令
+            if (shouldRun) {
+                for (AutoMessage message : autoMessages) {
+                    if (message.isRunning) {
+                        message.tryToSend(client);
+                    }
+                }
+                for (AutoCommand command : autoCommands) {
+                    if (command.isRunning) {
+                        command.tryToExecute(client);
+                    }
+                }
+            }
+        });
     }
 
     private static void loadMessagesConfig() {
@@ -114,52 +125,17 @@ public class AutomessageClient implements ClientModInitializer {
         }
     }
 
-    private static void startMessageThread() {
-        messageThread = new Thread(() -> {
-            while (shouldRun) {
-                for (AutoMessage message : autoMessages) {
-                    if (message.isRunning) {
-                        message.tryToSend();
-                    }
-                }
-                for (AutoCommand command : autoCommands) {
-                    if (command.isRunning) {
-                        command.tryToExecute();
-                    }
-                }
-                try {
-                    Thread.sleep(1000); // 每秒檢查一次
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-        });
-        messageThread.start();
-    }
 
-    private static void sendGlobalMessage(String message) {
-        MinecraftClient client = MinecraftClient.getInstance();
+
+    private static void sendGlobalMessage(MinecraftClient client, String message) {
         if (client.player != null) {
-            client.execute(() -> {
-                try {
-                    client.player.networkHandler.sendChatMessage(message);
-                } catch (Exception e) {
-                    System.out.println("無法發送消息: " + e.getMessage());
-                }
-            });
+            client.player.networkHandler.sendChatMessage(message);
         }
     }
 
-    private static void executeCommand(String command) {
-        MinecraftClient client = MinecraftClient.getInstance();
+    private static void executeCommand(MinecraftClient client, String command) {
         if (client.player != null) {
-            client.execute(() -> {
-                try {
-                    client.player.networkHandler.sendCommand(command.substring(1)); // 移除開頭的 "/"
-                } catch (Exception e) {
-                    System.out.println("無法執行指令: " + e.getMessage());
-                }
-            });
+            client.player.networkHandler.sendCommand(command.substring(1)); // 移除開頭的 "/"
         }
     }
 
@@ -176,10 +152,10 @@ public class AutomessageClient implements ClientModInitializer {
             this.lastSentTime = 0;
         }
 
-        void tryToSend() {
+        void tryToSend(MinecraftClient client) {
             long currentTime = System.currentTimeMillis();
             if (currentTime - lastSentTime >= interval * 1000) {
-                sendGlobalMessage(message);
+                sendGlobalMessage(client, message);
                 lastSentTime = currentTime;
             }
         }
@@ -198,10 +174,10 @@ public class AutomessageClient implements ClientModInitializer {
             this.lastExecutedTime = 0;
         }
 
-        void tryToExecute() {
+        void tryToExecute(MinecraftClient client) {
             long currentTime = System.currentTimeMillis();
             if (currentTime - lastExecutedTime >= interval * 1000) {
-                executeCommand(command);
+                executeCommand(client, command);
                 lastExecutedTime = currentTime;
             }
         }
